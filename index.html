@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Paper Map Data</title>
+<meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.5.1/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.5.1/mapbox-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@7.0.0/turf.min.js"></script>
+<style>
+body { margin: 0; padding: 0; }
+
+#map { position: absolute; top: 0; bottom: 0; width: 100%; }
+
+#filters {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    width: 300px;
+    height: 400px;
+    overflow: auto;
+    background-color: white;
+}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="filters"></div>
+<script>
+    const devMode = true;
+
+    const endpoint = !devMode ? "https://paper-map-data.plantopo.com" : location.protocol + "//" + location.host;
+
+    const filteredLayers = ["paper-outline", "paper-fill", "paper-short-title", "paper-title", "paper-icon"];
+    const allPublishers = ["Ordnance Survey", "Ordnance Survey of Northern Ireland", "Harvey Maps"]
+        .sort((a, b) => a.localeCompare(b));
+    const publishersHiddenByDefault = [];
+    const visiblePublishers = new Set(allPublishers.filter(p => !publishersHiddenByDefault.includes(p)));
+
+	mapboxgl.accessToken = "MAPBOX_ACCESS_TOKEN";
+    const map = new mapboxgl.Map({
+        container: "map",
+        style: "mapbox://styles/dzfranklin/clxg325c5006e01qmfsghevb9",
+        center: [-4.036377, 54.241984],
+        zoom: 5,
+        hash: true,
+    });
+
+    map.on("load", async () => {
+        const sourceResp = await fetch("/source.json"); 
+        const sourceJSON = await sourceResp.json();
+
+        if (devMode) {
+            sourceJSON.tiles = sourceJSON.tiles.map(url=>url.replace(/^https:\/\/paper-map-data.plantopo.com/, location.protocol + "//" + location.host));
+        }
+
+        map.addSource("paper", sourceJSON);
+
+        // Layers
+
+        map.addLayer({
+            "id": "paper-outline",
+            "type": "line",
+            "source": "paper",
+            "source-layer": "maps",
+            "slot": "middle",
+            "layout": {},
+            "paint": {
+                "line-color": ["get", "color"],
+                "line-width": 1.5,
+                "line-opacity": 0.8,
+            },
+        });
+        map.addLayer({
+            "id": "paper-fill",
+            "type": "fill",
+            "source": "paper",
+            "source-layer": "maps",
+            "slot": "middle",
+            "layout": {},
+            "paint": {
+                "fill-color": ["get", "color"],
+                "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.3, 0.2],
+            },
+        });
+        map.addLayer({
+            "id": "paper-short-title",
+            "type": "symbol",
+            "source": "paper",
+            "source-layer": "maps",
+            "slot": "top",
+            "minzoom": 7,
+            "maxzoom": 9,
+            "layout": {
+                "text-field": ["get", "short_title"],
+                "text-allow-overlap": true,
+                "text-size": 14,
+                "text-anchor": "top",
+                "text-offset": [0, 1],
+            },
+            "paint": {
+                "text-color": ["get", "color"],
+            },
+        });
+        map.addLayer({
+            "id": "paper-title",
+            "type": "symbol",
+            "source": "paper",
+            "source-layer": "maps",
+            "slot": "top",
+            "minzoom": 9,
+            "layout": {
+                "text-field": ["get", "title"],
+                "text-allow-overlap": true,
+                "text-offset": [0, 2],
+            },
+            "paint": {
+                "text-color": ["get", "color"],
+            },
+        });
+        map.addLayer({
+            "id": "paper-icon",
+            "type": "symbol",
+            "source": "paper",
+            "source-layer": "maps",
+            "slot": "top",
+            "minzoom": 5,
+            "layout": {
+                "icon-image": ["get", "publisher"],
+                "icon-allow-overlap": true,
+                "icon-anchor": "center",
+                "icon-size": ["interpolate", ["linear"], ["zoom"],
+                    5, 0.2,
+                    9, 0.5,
+                ],
+            },
+            "paint": {},
+        });
+        
+        const loadImage = url => new Promise((res, rej) => map.loadImage(url, (err, image) => err ? rej(err) : res(image)));
+        Promise.all(allPublishers.map(p => loadImage(endpoint+"/images/publisher_icons/"+encodeURIComponent(p)+".png")))
+            .then(images => {
+                for (const i in allPublishers) {
+                    map.addImage(allPublishers[i], images[i]);
+                }
+                console.log("Publisher icons loaded");
+            });
+
+        // Filters
+
+        const filtersEl = document.querySelector("#filters");
+        const listEl = document.createElement("ul");
+        filtersEl.append(listEl);
+        for (const publisher of allPublishers) {
+            const pubEl = document.createElement("li");
+            listEl.append(pubEl);
+
+            const pubCheckEl = document.createElement("input");
+            pubEl.append(pubCheckEl);
+            pubCheckEl.type = "checkbox";
+            pubCheckEl.name = publisher;
+            if (visiblePublishers.has(publisher)) {
+                pubCheckEl.checked = true;
+            }
+
+            const pubIconEl = document.createElement("img");
+            pubEl.append(pubIconEl);
+            pubIconEl.src = endpoint+"/images/publisher_icons/"+encodeURIComponent(publisher)+".png";
+            pubIconEl.width = "18";
+
+            const pubLabelEl = document.createElement("span");
+            pubEl.append(pubLabelEl);
+            pubLabelEl.innerText = publisher;
+        }
+
+        function updateMapFilters() {
+             filterValues = Array.from(visiblePublishers);
+            if (filterValues.length === 0) {
+                filterValues.push('');
+            }
+            let filter = ["in", "publisher", ...filterValues];
+
+            for (const layer of filteredLayers) {
+                map.setFilter(layer, filter);
+            }
+        }
+        updateMapFilters();
+
+        // Interactivity
+
+
+        filtersEl.addEventListener("change", evt => {
+            if (evt.target.checked) {
+                visiblePublishers.add(evt.target.name);
+            } else {
+                visiblePublishers.delete(evt.target.name);
+            }
+            updateMapFilters();
+        });
+
+
+        let hoveredID = null;
+        for (const layerID of ["paper-line", "paper-fill"]) {
+            map.on("mousemove", layerID, (e) => {
+                if (e.features.length > 0) {
+                    if (hoveredID !== null) {
+                        map.setFeatureState(
+                            { source: "paper", sourceLayer: "maps", id: hoveredID },
+                            { hover: false }
+                        );
+                    }
+                    hoveredID = e.features[0].id;
+                    map.setFeatureState(
+                        { source: "paper", sourceLayer: "maps", id: hoveredID },
+                        { hover: true }
+                    );
+                }
+            });
+            // When the mouse leaves the state-fill layer, update the feature state of the
+            // previously hovered feature.
+            map.on("mouseleave", layerID, () => {
+                if (hoveredID !== null) {
+                    map.setFeatureState(
+                        { source: "paper", sourceLayer: "maps", id: hoveredID },
+                        { hover: false }
+                    );
+                }
+                hoveredID = null;
+            });
+
+            map.on("click", layerID, (e) => {
+                const f = e.features[0];
+                if (!f) return;
+                const p = f.properties;
+
+                console.log(f);
+
+                const coordinates = turf.centroid(f.geometry).geometry.coordinates;
+
+                // Ensure that if the map is zoomed out such that multiple
+                // copies of the feature are visible, the popup appears
+                // over the copy being pointed to.
+                if (['mercator', 'equirectangular'].includes(map.getProjection().name)) {
+                    while (Math.abs(e.lngLat.lng - coordinates[0]) > 180) {
+                        coordinates[0] += e.lngLat.lng > coordinates[0] ? 360 : -360;
+                    }
+                }
+
+                const parentEl = document.createElement("div");
+                parentEl.style.width="600px";
+                parentEl.style.maxHeight="600px";
+                parentEl.style.overflow="auto";
+
+                const preEl = document.createElement("pre");
+                parentEl.append(preEl);
+                preEl.style.width="100%";
+                preEl.innerText = JSON.stringify(f.properties, null, 2);
+
+                const pubIconEl = document.createElement("img");
+                parentEl.append(pubIconEl);
+                pubIconEl.width = pubIconEl.height = "24";
+                pubIconEl.src = endpoint+"/images/publisher_icons/"+encodeURIComponent(p.publisher)+".png";
+
+                if (p.thumbnail) {
+                    const thumbEl = document.createElement("img");
+                    parentEl.append(thumbEl);
+                    thumbEl.src = p.thumbnail;
+
+
+                    if (devMode) {
+                        thumbEl.src = thumbEl.src.replace(/^https:\/\/paper-map-data.plantopo.com/, location.protocol + "//" + location.host);
+                    }
+                }
+
+                const purchaseContainer = document.createElement("div");
+                parentEl.append(purchaseContainer);
+                const purchaseLinkEl = document.createElement("a");
+                purchaseContainer.append(purchaseLinkEl);
+                purchaseLinkEl.href = p.purchase_url;
+                purchaseLinkEl.innerText = "Purchase " + p.title;
+
+                if (p.images) {
+                    const imgContainer = document.createElement("ul");
+                    parentEl.append(imgContainer);
+                    for (const src of JSON.parse(p.images)) {
+                        const parentEl = document.createElement("li");
+                        imgContainer.append(parentEl);
+
+                        const el = document.createElement("img");
+                        parentEl.append(el);
+                        el.src = src;
+
+                        if (devMode) {
+                            el.src = el.src.replace(/^https:\/\/paper-map-data.plantopo.com/, location.protocol + "//" + location.host);
+                        }
+                    }
+                }
+
+                new mapboxgl.Popup()
+                    .setMaxWidth(600)
+                    .setLngLat(coordinates)
+                    .setDOMContent(parentEl)
+                    .addTo(map);
+            });
+        }
+    });
+</script>
+
+</body>
+</html>
