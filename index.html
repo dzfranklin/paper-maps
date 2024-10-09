@@ -42,8 +42,8 @@
     }
 
     (async function () {
-        let protocol = new pmtiles.Protocol()
-        maplibregl.addProtocol("pmtiles", protocol.tile)
+        let protocol = new pmtiles.Protocol({metadata: true});
+        maplibregl.addProtocol("pmtiles", protocol.tile);
 
         const publishers = await (await fetch('publishers.json')).json();
 
