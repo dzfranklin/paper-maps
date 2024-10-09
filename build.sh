@@ -28,7 +28,7 @@ echo
 
 attribution=$(jq -s -r 'map(.features) | flatten | map(.properties.publisher) | unique | map("© "+.) | join(" ")' sources/*/geojson.json)
 
-echo '{"type": "FeatureCollection", "properties": {"attribution": "'"$attribution"'"}, "features": []}' > build/paper_maps_geojson.json
+echo '{"type": "FeatureCollection", "features": []}' > build/paper_maps_geojson.json
 for f in sources/*/geojson.json; do
   cp build/paper_maps_geojson.json build/input.json
   jq '.features += inputs.features' build/input.json "$f" > build/paper_maps_geojson.json
