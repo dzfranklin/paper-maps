@@ -1,9 +1,0 @@
-{
-    "type": "vector",
-    "tiles": [
-        "https://paper-map-data.plantopo.com/tiles/{z}/{x}/{y}.pbf"
-    ],
-    "minzoom": 1,
-    "maxzoom": 5,
-    "attribution": "ATTRIBUTION"
-}

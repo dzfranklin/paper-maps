@@ -80,7 +80,7 @@ for (const layer of rawData.layers) {
         continue;
     }
 
-    log(`Processing ${layer.name} (${layer.features.length} features)`); 
+    log(`Processing ${layer.name} (${layer.features.length} features)`);
     for (const f of layer.features) {
         const a = f.attributes;
 
@@ -169,8 +169,9 @@ for (const layer of rawData.layers) {
                 "color": color,
                 "purchase_url": "https://www.harveymaps.co.uk/acatalog/"+a.HYPERLINK,
                 "title": title,
-                "thumbnail": "https://paper-map-data.plantopo.com/images/harvey/"+prodCode+"_thumbnail.jpg",
-                "images": ["https://paper-map-data.plantopo.com/images/harvey/"+prodCode+"_front.jpg"],
+                "icon": "https://plantopo-storage.b-cdn.net/paper-maps/images/publisher_icons/harvey.png",
+                "thumbnail": "https://plantopo-storage.b-cdn.net/paper-maps/images/harvey/"+prodCode+"_thumbnail.jpg",
+                "images": ["https://plantopo-storage.b-cdn.net/paper-maps/images/harvey/"+prodCode+"_front.jpg"],
             },
             "geometry": geometry,
         };
@@ -208,7 +209,7 @@ log("outputted geojson.json")
 let thumbCount = 0;
 for await (const entry of Deno.readDir("./images")) {
     if (!entry.isFile) continue;
-    
+
     if (entry.name.endsWith("_front.jpg")) {
         const baseName = entry.name.replace(/_front.jpg$/, "");
 

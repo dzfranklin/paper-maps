@@ -24,32 +24,35 @@ done
 echo "Assembled $(find build/images -type f | wc -l) images"
 echo
 
-# Build tiles
-
-mkdir -p build/tiles
+# Assemble metadata
 
 attribution=$(jq -s -r 'map(.features) | flatten | map(.properties.publisher) | unique | map("© "+.) | join(" ")' sources/*/geojson.json)
 
-source_files=()
-for source_path in sources/*; do
-    source=$(basename "$source_path")
-    source_files+=(sources/"$source"/geojson.json)
+echo '{"type": "FeatureCollection", "properties": {"attribution": "'"$attribution"'"}, "features": []}' > build/paper_maps_geojson.json
+for f in sources/*/geojson.json; do
+  cp build/paper_maps_geojson.json build/input.json
+  jq '.features += inputs.features' build/input.json "$f" > build/paper_maps_geojson.json
+  rm build/input.json
 done
 
-tippecanoe \
-    --maximum-zoom=5 --minimum-zoom=1 \
-    --output-to-directory=build/tiles \
+jq -s 'map(.features) | flatten | map([.properties.publisher, .properties.series, .properties.icon]) | group_by(.[0]) | map({key:.[0][0], value:{publisher: .[0][0], series: map(.[1]) | unique, icon: .[0][2]}}) | from_entries' sources/*/geojson.json >build/publishers.json
+
+# Build tiles
+
+tippecanoe --output build/paper_maps.pmtiles \
+    --name "Paper Maps" --description "Paper Maps generated $(date -u '+%Y-%m-%d')" \
+    --attribution "$attribution" \
+    --base-zoom=g \
+    -zg \
     --generate-ids \
-    --layer=maps \
+    --layer=default \
     --name="Paper Maps" \
-    "${source_files[@]}"
+    build/paper_maps_geojson.json
 
-# Assemble resources
+# Final prep
 
-sed s/MAPBOX_ACCESS_TOKEN/"$MAPBOX_ACCESS_TOKEN"/ index.html >build/index.html
-sed s/ATTRIBUTION/"$attribution"/ source.json >build/source.json
+cp index.html build/index.html
+gzip build/paper_maps_geojson.json
 
-jq -s 'map(.features) | flatten | map([.properties.publisher, .properties.series]) | unique | group_by(.[0]) | map({key:.[0][0], value:{publisher: .[0][0], series: map(.[1]), icon: ("http://paper-map-data.plantopo.com/images/publisher_icons/"+(.[0][0] | @uri)+".png")}}) | from_entries' sources/*/geojson.json >build/publishers.json
-
-echo
 echo "All done"
+echo "To deploy upload the ./build folder to the paper-maps folder in plantopo-storage at bunny.net"
