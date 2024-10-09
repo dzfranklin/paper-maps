@@ -1,20 +1,22 @@
 #!/usr/bin/env -S deno run --allow-all
 
 import {existsSync} from "https://deno.land/std/fs/mod.ts";
+import rewind from "npm:@mapbox/geojson-rewind";
+import { check } from "npm:@placemarkio/check-geojson"
 
 Deno.addSignalListener("SIGINT", () => {
-  console.log("interrupted!");
-  Deno.exit();
+    console.log("interrupted!");
+    Deno.exit();
 });
 
 const logTextEncoder = new TextEncoder();
 
 function log(...args) {
-    const msg = args.join(" ")+"\n";
+    const msg = args.join(" ") + "\n";
     Deno.writeAllSync(Deno.stderr, logTextEncoder.encode(msg));
 }
 
-const sleep = (s) => new Promise((resolve) => setTimeout(resolve, s*1000));
+const sleep = (s) => new Promise((resolve) => setTimeout(resolve, s * 1000));
 
 if (!existsSync(".data.js.cache")) {
     console.log("Requesting data.js");
@@ -45,7 +47,7 @@ async function download(src, dst) {
 
     const resp = await fetch(src);
     if (!resp.ok) {
-        throw new Error("Fetch failed: "+ resp.status);
+        throw new Error("Fetch failed: " + resp.status);
     }
 
     const data = await resp.arrayBuffer();
@@ -68,10 +70,15 @@ const baseLayerYOrigin = baseImgYCenter + (baseLayerSize / 2) * baseLayerScale;
 log("base layer origin", baseLayerXOrigin, baseLayerYOrigin);
 
 function reproject(srcX, srcY) {
-    return [srcX * baseLayerScale + baseLayerXOrigin, -1*srcY * baseLayerScale + baseLayerYOrigin];
+    return [srcX * baseLayerScale + baseLayerXOrigin, -1 * srcY * baseLayerScale + baseLayerYOrigin];
 }
 
-const skipList = ["YHSWTRW", "YHSWCR", "YHWRSD"];
+const skipList = [
+    "YHSWTRW",
+    "YHSWCR",
+    "YHWRSD",
+    "YHCMCCW", // encoded as a polygon when it should be a line
+];
 
 const outFeatures = [];
 for (const layer of rawData.layers) {
@@ -86,6 +93,14 @@ for (const layer of rawData.layers) {
 
         const title = a.TITLE ?? a.NAME;
 
+        let purchaseURL = a.HYPERLINK
+        if (purchaseURL.startsWith("http://")) {
+            purchaseURL = purchaseURL.replace("http://", "https://");
+        }
+        if (!purchaseURL.startsWith("https://")) {
+            purchaseURL = "https://www.harveymaps.co.uk/acatalog/"+purchaseURL;
+        }
+
         const prodCode = a.PROD_CODE ?? a.PRODUCT_CODE;
         if (skipList.includes(prodCode)) {
             log("Skipping,", layer.name, title);
@@ -99,8 +114,8 @@ for (const layer of rawData.layers) {
 
         try {
             await download(
-                "https://www.harveymaps.co.uk/acatalog/"+prodCode+".jpg",
-                "images/"+prodCode+"_front.jpg");
+                "https://www.harveymaps.co.uk/acatalog/" + prodCode + ".jpg",
+                "images/" + prodCode + "_front.jpg");
         } catch (err) {
             log("Failed to fetch image, skipping", layer.name, title, ": ", err);
             continue;
@@ -113,11 +128,11 @@ for (const layer of rawData.layers) {
         if (f.polygons) {
             const coordinates = f.polygons.map(p => p.coords
                 .split(" ")
-                .map(c=> {
+                .map(c => {
                     const xy = c
                         .split(",")
                         .map(n => parseFloat(n));
-                    if (xy.length != 2) {
+                    if (xy.length !== 2) {
                         throw new Error("Unimplemented");
                     }
                     return reproject(xy[0], xy[1]);
@@ -133,16 +148,28 @@ for (const layer of rawData.layers) {
                 }
             }
 
-            geometry = {
-                type: "Polygon",
-                coordinates,
-            };
+            if (coordinates.length === 1) {
+                geometry = {
+                    type: "Polygon",
+                    coordinates,
+                };
+            } else {
+                geometry = {type: "MultiPolygon", coordinates: []};
+                for (const poly of coordinates) {
+                    if (poly.length < 4) {
+                        log("Skipping multipolygon component with less than four points in " + title)
+                        continue
+                    }
+                    geometry.coordinates.push([poly]);
+                }
+            }
+            geometry = rewind({type: "Feature", geometry}).geometry;
         } else if (f.polylines) {
             log("Skipping line map", layer.name, title);
             continue;
             const coordinates = f.polylines.map(p => p.coords
                 .split(" ")
-                .map(c=> {
+                .map(c => {
                     const xy = c
                         .split(",")
                         .map(n => parseFloat(n));
@@ -167,11 +194,11 @@ for (const layer of rawData.layers) {
                 "publisher": "Harvey Maps",
                 "series": layer.name,
                 "color": color,
-                "purchase_url": "https://www.harveymaps.co.uk/acatalog/"+a.HYPERLINK,
+                "purchase_url": purchaseURL,
                 "title": title,
                 "icon": "https://plantopo-storage.b-cdn.net/paper-maps/images/publisher_icons/harvey.png",
-                "thumbnail": "https://plantopo-storage.b-cdn.net/paper-maps/images/harvey/"+prodCode+"_thumbnail.jpg",
-                "images": ["https://plantopo-storage.b-cdn.net/paper-maps/images/harvey/"+prodCode+"_front.jpg"],
+                "thumbnail": "https://plantopo-storage.b-cdn.net/paper-maps/images/harvey/" + prodCode + "_thumbnail.jpg",
+                "images": ["https://plantopo-storage.b-cdn.net/paper-maps/images/harvey/" + prodCode + "_front.jpg"],
             },
             "geometry": geometry,
         };
@@ -184,9 +211,9 @@ const out = {
     crs: {
         type: "name",
         properties: {
-          name: "urn:ogc:def:crs:EPSG::27700"
+            name: "urn:ogc:def:crs:EPSG::27700"
         }
-      },
+    },
     features: outFeatures,
 };
 
@@ -196,7 +223,7 @@ const outFile = await Deno.makeTempFile({suffix: ".json"});
 await Deno.writeTextFile(outFile, JSON.stringify(out));
 
 const ogr2ogrCmd = new Deno.Command("ogr2ogr", {
-    args: ["-t_srs", "epsg:4326", "-if", "geojson", "geojson.json", outFile],
+    args: ["-t_srs", "epsg:4326", "-if", "geojson", "-lco", "RFC7946=YES", "geojson.json", outFile],
 });
 const res = await ogr2ogrCmd.output();
 if (res.code !== 0) {
@@ -205,6 +232,10 @@ if (res.code !== 0) {
     throw new Error("ogr2ogr failed: " + stderr);
 }
 log("outputted geojson.json")
+
+const outputtedJSON = await Deno.readTextFile("geojson.json")
+check(outputtedJSON);
+log("validated json")
 
 let thumbCount = 0;
 for await (const entry of Deno.readDir("./images")) {
@@ -215,10 +246,10 @@ for await (const entry of Deno.readDir("./images")) {
 
         const cmd = new Deno.Command("magick", {
             args: [
-                "./images/"+entry.name,
+                "./images/" + entry.name,
                 "-strip",
                 "-resize", "x250",
-                "./images/"+baseName+"_thumbnail.jpg"
+                "./images/" + baseName + "_thumbnail.jpg"
             ]
         });
         const res = await cmd.output();

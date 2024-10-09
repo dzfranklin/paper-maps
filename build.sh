@@ -34,6 +34,7 @@ for f in sources/*/geojson.json; do
   jq '.features += inputs.features' build/input.json "$f" > build/paper_maps_geojson.json
   rm build/input.json
 done
+./check-geojson.js build/paper_maps_geojson.json
 
 jq -s 'map(.features) | flatten | map([.properties.publisher, .properties.series, .properties.icon]) | group_by(.[0]) | map({key:.[0][0], value:{publisher: .[0][0], series: map(.[1]) | unique, icon: .[0][2]}}) | from_entries' sources/*/geojson.json >build/publishers.json
 
