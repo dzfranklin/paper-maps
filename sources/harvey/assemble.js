@@ -194,7 +194,7 @@ for (const layer of rawData.layers) {
                 "publisher": "Harvey Maps",
                 "series": layer.name,
                 "color": color,
-                "purchase_url": purchaseURL,
+                "url": purchaseURL,
                 "title": title,
                 "icon": "https://plantopo-storage.b-cdn.net/paper-maps/images/publisher_icons/harvey.png",
                 "thumbnail": "https://plantopo-storage.b-cdn.net/paper-maps/images/harvey/" + prodCode + "_thumbnail.jpg",

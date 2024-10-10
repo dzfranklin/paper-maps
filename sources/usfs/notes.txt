@@ -1,0 +1,14 @@
+https://www.arcgis.com/apps/webappviewer/index.html?id=b70e11a68aac46b3a5bd911b82b53c1e
+
+contains a popup specified in: https://www.arcgis.com/sharing/rest/content/items/196209651ca9401083a618e16aafd567/data?f=json
+
+<p>Southeast Coordinate: {secoord} <br />&nbsp; </p>
+<p>
+  <a target='_blank' href='https://data.fs.usda.gov/geodata/rastergateway/downloadMap.php?mapID={secoord}&mapType=pdf&seriesType=FSTopo' rel='nofollow ugc noopener noreferrer'>FSTopo Downlad PDF</a>
+  <br />
+  <a target='_blank' href='https://data.fs.usda.gov/geodata/rastergateway/downloadMap.php?mapID={secoord}&mapType=tif&seriesType=FSTopo' rel='nofollow ugc noopener noreferrer'>FSTopo Download GeoTIFF</a>
+  <br />
+  <a target='_blank' href='https://data.fs.usda.gov/geodata/rastergateway/downloadMap.php?mapID={secoord}&mapType=pdf' rel='nofollow ugc noopener noreferrer'>Legay FSTopo Download PDF</a>
+  <br />
+  <a target='_blank' href='https://data.fs.usda.gov/geodata/rastergateway/downloadMap.php?mapID={secoord}&mapType=tif' rel='nofollow ugc noopener noreferrer'>Legacy FSTopo Download GeoTiff</a>
+</p>
