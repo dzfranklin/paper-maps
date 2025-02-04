@@ -44,7 +44,7 @@ tippecanoe --output build/paper_maps.pmtiles \
     --name "Paper Maps" --description "Paper Maps generated $(date -u '+%Y-%m-%d')" \
     --attribution "$attribution" \
     --base-zoom=g \
-    -zg \
+    -zg --extend-zooms-if-still-dropping \
     --generate-ids \
     --layer=default \
     --name="Paper Maps" \
