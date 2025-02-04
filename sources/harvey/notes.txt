@@ -1,0 +1,1 @@
+finder_base.tif: gdal_translate -a_srs epsg:27700 -a_ullr -460906.3519477807 1249075.8629210177 947920.088028016 2657902.3028968144 finder_base.jpg finder_base.tif

@@ -1,7 +1,7 @@
-localhost
+:8080 {
+    file_server browse {
+        root build/
+    }
 
-file_server browse {
-    root build/
+    header /tiles/* Content-Encoding gzip
 }
-
-header /tiles/* Content-Encoding gzip

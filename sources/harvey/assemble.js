@@ -1,8 +1,9 @@
 #!/usr/bin/env -S deno run --allow-all
 
-import {existsSync} from "https://deno.land/std/fs/mod.ts";
+import {existsSync} from "https://deno.land/std@0.224.0/fs/mod.ts";
+import {writeAllSync} from "https://deno.land/std@0.224.0/io/write_all.ts";
 import rewind from "npm:@mapbox/geojson-rewind";
-import { check } from "npm:@placemarkio/check-geojson"
+import {check} from "npm:@placemarkio/check-geojson"
 
 Deno.addSignalListener("SIGINT", () => {
     console.log("interrupted!");
@@ -13,7 +14,7 @@ const logTextEncoder = new TextEncoder();
 
 function log(...args) {
     const msg = args.join(" ") + "\n";
-    Deno.writeAllSync(Deno.stderr, logTextEncoder.encode(msg));
+    writeAllSync(Deno.stderr, logTextEncoder.encode(msg));
 }
 
 const sleep = (s) => new Promise((resolve) => setTimeout(resolve, s * 1000));
@@ -68,6 +69,12 @@ const baseLayerXOrigin = baseImgXCenter - (baseLayerSize / 2) * baseLayerScale;
 const baseLayerYOrigin = baseImgYCenter + (baseLayerSize / 2) * baseLayerScale;
 
 log("base layer origin", baseLayerXOrigin, baseLayerYOrigin);
+log("base layer ullr",
+    baseImgXCenter - (baseLayerSize / 2) * baseLayerScale, // ulx
+    baseImgYCenter + (baseLayerSize / 2) * baseLayerScale, // uly
+    baseImgXCenter + (baseLayerSize / 2) * baseLayerScale, // lrx
+    baseImgYCenter - (baseLayerSize / 2) * baseLayerScale, // lry
+);
 
 function reproject(srcX, srcY) {
     return [srcX * baseLayerScale + baseLayerXOrigin, -1 * srcY * baseLayerScale + baseLayerYOrigin];
@@ -98,7 +105,7 @@ for (const layer of rawData.layers) {
             purchaseURL = purchaseURL.replace("http://", "https://");
         }
         if (!purchaseURL.startsWith("https://")) {
-            purchaseURL = "https://www.harveymaps.co.uk/acatalog/"+purchaseURL;
+            purchaseURL = "https://www.harveymaps.co.uk/acatalog/" + purchaseURL;
         }
 
         const prodCode = a.PROD_CODE ?? a.PRODUCT_CODE;
@@ -206,7 +213,7 @@ for (const layer of rawData.layers) {
     }
 }
 
-const out = {
+const json27700 = {
     type: "FeatureCollection",
     crs: {
         type: "name",
@@ -217,13 +224,14 @@ const out = {
     features: outFeatures,
 };
 
-// console.log(JSON.stringify(out, null, 2));
+const out27700 = await Deno.makeTempFile({suffix: ".json"});
+await Deno.writeTextFile(out27700, JSON.stringify(json27700));
 
-const outFile = await Deno.makeTempFile({suffix: ".json"});
-await Deno.writeTextFile(outFile, JSON.stringify(out));
+const out4326 = await Deno.makeTempFile({suffix: ".json"});
+await Deno.remove(out4326);
 
 const ogr2ogrCmd = new Deno.Command("ogr2ogr", {
-    args: ["-t_srs", "epsg:4326", "-if", "geojson", "-lco", "RFC7946=YES", "geojson.json", outFile],
+    args: ["-t_srs", "epsg:4326", "-if", "geojson", "-lco", "RFC7946=YES", out4326, out27700],
 });
 const res = await ogr2ogrCmd.output();
 if (res.code !== 0) {
@@ -231,11 +239,16 @@ if (res.code !== 0) {
     const stderr = dec.decode(res.stderr);
     throw new Error("ogr2ogr failed: " + stderr);
 }
-log("outputted geojson.json")
+log("reprojected json")
 
-const outputtedJSON = await Deno.readTextFile("geojson.json")
-check(outputtedJSON);
+const json4326 = JSON.parse(await Deno.readTextFile(out4326));
+delete json4326.name;
+
+check(JSON.stringify(json4326));
 log("validated json")
+
+await Deno.writeTextFile("./geojson.json", JSON.stringify(json4326, null, 4));
+log("wrote ./geojson.json");
 
 let thumbCount = 0;
 for await (const entry of Deno.readDir("./images")) {
