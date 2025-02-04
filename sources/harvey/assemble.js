@@ -2,10 +2,10 @@
 
 import {existsSync} from "https://deno.land/std@0.224.0/fs/mod.ts";
 import {writeAllSync} from "https://deno.land/std@0.224.0/io/write_all.ts";
-import rewindFeature from "npm:@mapbox/geojson-rewind";
-import {check} from "npm:@placemarkio/check-geojson";
-
-// TODO: Use coverage pages like https://www.harveymaps.co.uk/acatalog/coverage_YHSWPH.html
+import rewind from "npm:@mapbox/geojson-rewind";
+import {check} from "npm:@placemarkio/check-geojson@0.1.12";
+import * as tj from "npm:@tmcw/togeojson@6.0.1";
+import {DOMParser} from "npm:xmldom@0.6.0";
 
 Deno.addSignalListener("SIGINT", () => {
     console.log("interrupted!");
@@ -32,7 +32,15 @@ if (!existsSync(".cache/data.js")) {
 }
 const rawData = JSON.parse(await Deno.readTextFile(".cache/data.js"));
 
-const layerFilter = ["Superwalker (1:25,000)", "Ultramap (1:40,000)", "British Mountain Map (1:40,000)", "Trail Map (1:40,000)", "Outdoor Atlas", "Cycle Touring maps", "Off Road Cycling maps"];
+const layerFilter = [
+    "Superwalker (1:25,000)",
+    "Ultramap (1:40,000)",
+    "British Mountain Map (1:40,000)",
+    "Trail Map (1:40,000)",
+    "Outdoor Atlas",
+    "Cycle Touring maps",
+    "Off Road Cycling maps",
+];
 
 const layerColors = {
     "Superwalker (1:25,000)": "#c80739",
@@ -44,10 +52,6 @@ const layerColors = {
     "Off Road Cycling maps": "#038559",
 }
 
-function rewind(geom) {
-    return rewindFeature({type: 'Feature', geometry: geom}).geometry;
-}
-
 async function download(src, dst) {
     if (existsSync(dst)) {
         return
@@ -56,7 +60,8 @@ async function download(src, dst) {
     let notFoundCache = [];
     try {
         notFoundCache = JSON.parse(await Deno.readTextFile("./.cache/notfound.json"));
-    } catch (err) {}
+    } catch (err) {
+    }
     if (notFoundCache.includes(src)) {
         throw new Error("src in not found cache: " + src);
     }
@@ -76,31 +81,6 @@ async function download(src, dst) {
     await Deno.writeFile(dst, new Uint8Array(data));
 }
 
-// In EPSG:27700
-
-const baseImgSize = 6400;
-const baseImgXCenter = 243506.8680401177;
-const baseImgYCenter = 544662.6429331194;
-const baseImgScale = 220.12913124621824;
-
-const baseLayerSize = 800;
-
-const baseLayerScale = baseImgScale * (baseImgSize / baseLayerSize);
-const baseLayerXOrigin = baseImgXCenter - (baseLayerSize / 2) * baseLayerScale;
-const baseLayerYOrigin = baseImgYCenter + (baseLayerSize / 2) * baseLayerScale;
-
-log("base layer origin", baseLayerXOrigin, baseLayerYOrigin);
-log("base layer ullr",
-    baseImgXCenter - (baseLayerSize / 2) * baseLayerScale, // ulx
-    baseImgYCenter + (baseLayerSize / 2) * baseLayerScale, // uly
-    baseImgXCenter + (baseLayerSize / 2) * baseLayerScale, // lrx
-    baseImgYCenter - (baseLayerSize / 2) * baseLayerScale, // lry
-);
-
-function reproject(srcX, srcY) {
-    return [srcX * baseLayerScale + baseLayerXOrigin, -1 * srcY * baseLayerScale + baseLayerYOrigin];
-}
-
 const outFeatures = [];
 for (const layer of rawData.layers) {
     if (!layerFilter.includes(layer.name)) {
@@ -109,7 +89,7 @@ for (const layer of rawData.layers) {
     }
 
     log(`Processing ${layer.name} (${layer.features.length} features)`);
-    features: for (const f of layer.features) {
+    for (const f of layer.features) {
         const a = f.attributes;
 
         const title = a.TITLE ?? a.NAME;
@@ -129,6 +109,11 @@ for (const layer of rawData.layers) {
 
         const prodCode = a.PROD_CODE ?? a.PRODUCT_CODE;
 
+        if (prodCode === 'YHWRCTC' || prodCode === 'YHWROF' || prodCode === 'YHWRWA1') {
+            log("Skipping map that is combination of other maps", layer.name, title);
+            continue;
+        }
+
         const color = layerColors[layer.name];
         if (!color) {
             throw new Error("missing color for " + layer.name + " " + title);
@@ -142,8 +127,7 @@ for (const layer of rawData.layers) {
                 await download(src, dst);
                 downloadedImg = true;
                 break
-            } catch (err) {
-                log("Failed to fetch", src, layer.name, title, ": ", err);
+            } catch {
             }
         }
         if (!downloadedImg) {
@@ -151,78 +135,65 @@ for (const layer of rawData.layers) {
             continue;
         }
 
+        let coveragePageSrc = "https://www.harveymaps.co.uk/acatalog/coverage_" + prodCode + ".html";
+        if (prodCode === "YHSWMU") {
+            // Two maps in one. See https://harveymaps.co.uk/acatalog/Mull--Iona-and-Ulva-YHSWMU.html
+            coveragePageSrc = "https://harveymaps.co.uk/acatalog/coverage_YHSWMU55.html";
+        } else if (prodCode === "YHSWDAN") {
+            coveragePageSrc = "https://www.harveymaps.co.uk/acatalog/coverage_YHSWDAN2.html";
+        } else if (prodCode === "YHSWDAS") {
+            coveragePageSrc = "https://www.harveymaps.co.uk/acatalog/coverage_YHSWDAS2.html"
+        }
+
+        const coveragePageFile = ".cache/coverage_" + prodCode + ".html";
+        await download(coveragePageSrc, coveragePageFile);
+
+        let coverageLayerURL;
+        if (prodCode === "YHULAR" || prodCode === "YHSWAR") {
+            coverageLayerURL = "http://www.harveymaps.co.uk/acatalog/overlays/sw_arran.kml";
+        } else if (prodCode === "YHWRSH") {
+            coverageLayerURL = "http://www.harveymaps.co.uk/acatalog/overlays/wr_shropshire_polygon.kml";
+        } else {
+            const coveragePageHTML = await Deno.readTextFile(coveragePageFile);
+            const coverageLayerMatches = Array.from(coveragePageHTML.matchAll(/KmlLayer\('(.*)'\)/g));
+            if (coverageLayerMatches.length === 0) throw new Error("expected a KmlLayer in " + coveragePageFile);
+            if (coverageLayerMatches.length > 1) throw new Error("more than one KmlLayer currently unsupported: " + coveragePageFile);
+            coverageLayerURL = coverageLayerMatches[0][1];
+        }
+        const coverageLayerFile = ".cache/coverage_" + prodCode + ".kml";
+        try {
+            await download(coverageLayerURL, coverageLayerFile);
+        } catch (err) {
+            log("Failed to download coverage layer, skipping", coveragePageSrc, purchaseURL, err);
+            continue
+        }
+
+        const kmlDOM = new DOMParser().parseFromString(await Deno.readTextFile(coverageLayerFile));
+        const coverageGJ = tj.kml(kmlDOM);
+        if (coverageGJ.type !== "FeatureCollection") {
+            throw new Error("expected a FeatureCollection in " + coverageLayerFile);
+        }
+
         let geometry;
-        if (f.polygons) {
-            const coordinates = f.polygons.map(p => p.coords
-                .split(" ")
-                .map(c => {
-                    const xy = c
-                        .split(",")
-                        .map(n => parseFloat(n));
-                    if (xy.length !== 2) {
-                        throw new Error("Unimplemented");
-                    }
-                    return reproject(xy[0], xy[1]);
-                })
-            );
-
-            if (coordinates.length === 1) {
-                if (!(coordinates[0][0][0] === coordinates[0].at(-1)[0] && coordinates[0][0][1] === coordinates[0].at(-1)[1])) {
-                    // As of Feb 2025 this is needed for Yorkshire Dales Cycleway (Cycle Touring maps)
-                    log("Converting single non-closed polygon to polyline", layer.name, title);
-                    geometry = {
-                        type: "LineString",
-                        coordinates: coordinates[0],
-                    }
-                } else {
-                    geometry = rewind({
-                        type: "Polygon",
-                        coordinates,
-                    });
-                }
-            } else {
-                geometry = {type: "MultiPolygon", coordinates: []};
-                for (const poly of coordinates) {
-                    if (poly.length < 4) {
-                        log("Skipping multipolygon component with less than four points in", layer.name, title)
-                        continue
-                    }
-
-                    if (!(poly[0][0] === poly.at(-1)[0] && poly[0][1] === poly.at(-1)[1])) {
-                        log("Skipping multipolygon component with non-closed ring in", layer.name, title)
-                        continue features;
-                    }
-                    geometry.coordinates.push([poly]);
-                }
-                geometry = rewind(geometry);
-            }
-        } else if (f.polylines) {
-            const coordinates = f.polylines.map(p => p.coords
-                .split(" ")
-                .map(c => {
-                    const xy = c
-                        .split(",")
-                        .map(n => parseFloat(n));
-                    if (xy.length !== 2) {
-                        throw new Error("Unimplemented");
-                    }
-                    return reproject(xy[0], xy[1]);
-                })
-            );
-            if (coordinates.length === 1) {
+        if (coverageGJ.features.length === 1) {
+            geometry = rewind(coverageGJ.features[0]).geometry;
+        } else if (coverageGJ.features.length > 1) {
+            if (coverageGJ.features.every(f => f.geometry.type === 'Polygon')) {
                 geometry = {
-                    type: "LineString",
-                    coordinates: coordinates[0],
-                }
-            } else {
-                geometry = {
-                    type: "MultiLineString",
-                    coordinates,
+                    type: 'MultiPolygon',
+                    coordinates: coverageGJ.features.map(f => rewind(f).geometry.coordinates),
                 };
+            } else if (coverageGJ.features.every(f => f.geometry.type === 'LineString')) {
+                geometry = {
+                    type: 'MultiLineString',
+                    coordinates: coverageGJ.features.map(f => rewind(f).geometry.coordinates),
+                }
+            } else {
+                log(coverageGJ.features.map(f => f.geometry.type));
+                throw new Error("multiple features that aren't all Polygons are not supported: " + coverageLayerFile);
             }
         } else {
-            log("Missing geometry, skipping", layer.name, title);
-            continue
+            throw new Error("no features in " + coverageLayerFile);
         }
 
         const mapped = {
@@ -243,49 +214,20 @@ for (const layer of rawData.layers) {
     }
 }
 
-const json27700 = {
+const fc = {
     type: "FeatureCollection",
-    crs: {
-        type: "name",
-        properties: {
-            name: "urn:ogc:def:crs:EPSG::27700"
-        }
-    },
     features: outFeatures,
 };
 
-check(JSON.stringify(json27700));
-log("validated json pre-reprojection");
-
-const out27700 = await Deno.makeTempFile({suffix: ".json"});
-await Deno.writeTextFile(out27700, JSON.stringify(json27700, null, 4));
-
-const out4326 = await Deno.makeTempFile({suffix: ".json"});
-await Deno.remove(out4326);
-
-const ogr2ogrCmd = new Deno.Command("ogr2ogr", {
-    args: ["-t_srs", "epsg:4326", "-if", "geojson", "-lco", "RFC7946=YES", out4326, out27700],
-});
-const res = await ogr2ogrCmd.output();
-if (res.code !== 0) {
-    const dec = new TextDecoder();
-    const stderr = dec.decode(res.stderr);
-    throw new Error("ogr2ogr failed: " + stderr);
-}
-log("reprojected json")
-
-const json4326 = JSON.parse(await Deno.readTextFile(out4326));
-delete json4326.name;
-
-for (const f of json4326.features) {
+for (const f of fc.features) {
     if (f.geometry === null) {
         throw new Error("null geometry: " + JSON.stringify(f))
     }
 }
-check(JSON.stringify(json4326));
-log("validated reprojected json")
+check(JSON.stringify(fc));
+log("validated output FeatureCollection");
 
-await Deno.writeTextFile("./geojson.json", JSON.stringify(json4326, null, 4));
+await Deno.writeTextFile("./geojson.json", JSON.stringify(fc, null, 4));
 log("wrote ./geojson.json");
 
 let thumbCount = 0;
@@ -295,12 +237,17 @@ for await (const entry of Deno.readDir("./images")) {
     if (entry.name.endsWith("_front.jpg")) {
         const baseName = entry.name.replace(/_front.jpg$/, "");
 
+        const outPath = "./images/" + baseName + "_thumbnail.jpg";
+        if (existsSync(outPath)) {
+            continue;
+        }
+
         const cmd = new Deno.Command("magick", {
             args: [
                 "./images/" + entry.name,
                 "-strip",
                 "-resize", "x250",
-                "./images/" + baseName + "_thumbnail.jpg"
+                outPath,
             ]
         });
         const res = await cmd.output();
