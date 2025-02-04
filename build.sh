@@ -4,7 +4,7 @@ set -euo pipefail
 # Clean build dir
 
 if test -e build; then
-    rm -r build/*
+    find ./build -mindepth 1 -delete
 fi
 mkdir -p build
 
