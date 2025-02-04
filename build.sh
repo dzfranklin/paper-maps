@@ -48,6 +48,7 @@ tippecanoe --output build/paper_maps.pmtiles \
     --generate-ids \
     --layer=default \
     --name="Paper Maps" \
+    --no-tile-stats \
     build/paper_maps_geojson.json
 
 # Final prep
