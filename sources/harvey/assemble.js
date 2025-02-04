@@ -2,8 +2,10 @@
 
 import {existsSync} from "https://deno.land/std@0.224.0/fs/mod.ts";
 import {writeAllSync} from "https://deno.land/std@0.224.0/io/write_all.ts";
-import rewind from "npm:@mapbox/geojson-rewind";
-import {check} from "npm:@placemarkio/check-geojson"
+import rewindFeature from "npm:@mapbox/geojson-rewind";
+import {check} from "npm:@placemarkio/check-geojson";
+
+// TODO: Use coverage pages like https://www.harveymaps.co.uk/acatalog/coverage_YHSWPH.html
 
 Deno.addSignalListener("SIGINT", () => {
     console.log("interrupted!");
@@ -19,12 +21,16 @@ function log(...args) {
 
 const sleep = (s) => new Promise((resolve) => setTimeout(resolve, s * 1000));
 
-if (!existsSync(".data.js.cache")) {
+if (!existsSync(".cache")) {
+    await Deno.mkdir(".cache");
+}
+
+if (!existsSync(".cache/data.js")) {
     console.log("Requesting data.js");
     const data = await (await fetch("https://www.harveymaps.co.uk/acatalog/finder_data/data.js")).text();
-    await Deno.writeTextFile(".data.js.cache", data);
+    await Deno.writeTextFile(".cache/data.js", data);
 }
-const rawData = JSON.parse(await Deno.readTextFile(".data.js.cache"));
+const rawData = JSON.parse(await Deno.readTextFile(".cache/data.js"));
 
 const layerFilter = ["Superwalker (1:25,000)", "Ultramap (1:40,000)", "British Mountain Map (1:40,000)", "Trail Map (1:40,000)", "Outdoor Atlas", "Cycle Touring maps", "Off Road Cycling maps"];
 
@@ -32,10 +38,14 @@ const layerColors = {
     "Superwalker (1:25,000)": "#c80739",
     "Ultramap (1:40,000)": "#fdc800",
     "British Mountain Map (1:40,000)": "#e42849",
-    "Trail Map (1:40,000)": "#e42849",
+    "Trail Map (1:40,000)": "#5a317e",
     "Outdoor Atlas": "#00918e",
     "Cycle Touring maps": "#42a534",
     "Off Road Cycling maps": "#038559",
+}
+
+function rewind(geom) {
+    return rewindFeature({type: 'Feature', geometry: geom}).geometry;
 }
 
 async function download(src, dst) {
@@ -43,10 +53,21 @@ async function download(src, dst) {
         return
     }
 
+    let notFoundCache = [];
+    try {
+        notFoundCache = JSON.parse(await Deno.readTextFile("./.cache/notfound.json"));
+    } catch (err) {}
+    if (notFoundCache.includes(src)) {
+        throw new Error("src in not found cache: " + src);
+    }
+
     log(`Downloading ${src}->${dst}`);
     await sleep(1);
 
     const resp = await fetch(src);
+    if (resp.status === 404) {
+        await Deno.writeTextFile("./.cache/notfound.json", JSON.stringify([...notFoundCache, src]));
+    }
     if (!resp.ok) {
         throw new Error("Fetch failed: " + resp.status);
     }
@@ -80,13 +101,6 @@ function reproject(srcX, srcY) {
     return [srcX * baseLayerScale + baseLayerXOrigin, -1 * srcY * baseLayerScale + baseLayerYOrigin];
 }
 
-const skipList = [
-    "YHSWTRW",
-    "YHSWCR",
-    "YHWRSD",
-    "YHCMCCW", // encoded as a polygon when it should be a line
-];
-
 const outFeatures = [];
 for (const layer of rawData.layers) {
     if (!layerFilter.includes(layer.name)) {
@@ -95,10 +109,15 @@ for (const layer of rawData.layers) {
     }
 
     log(`Processing ${layer.name} (${layer.features.length} features)`);
-    for (const f of layer.features) {
+    features: for (const f of layer.features) {
         const a = f.attributes;
 
         const title = a.TITLE ?? a.NAME;
+
+        if (a.HYPERLINK === '') {
+            log('Skipping feature with empty hyperlink', layer.name, title);
+            continue;
+        }
 
         let purchaseURL = a.HYPERLINK
         if (purchaseURL.startsWith("http://")) {
@@ -109,28 +128,29 @@ for (const layer of rawData.layers) {
         }
 
         const prodCode = a.PROD_CODE ?? a.PRODUCT_CODE;
-        if (skipList.includes(prodCode)) {
-            log("Skipping,", layer.name, title);
-            continue;
-        }
 
         const color = layerColors[layer.name];
         if (!color) {
             throw new Error("missing color for " + layer.name + " " + title);
         }
 
-        try {
-            await download(
-                "https://www.harveymaps.co.uk/acatalog/" + prodCode + ".jpg",
-                "images/" + prodCode + "_front.jpg");
-        } catch (err) {
-            log("Failed to fetch image, skipping", layer.name, title, ": ", err);
+        let downloadedImg = false;
+        for (const ext of ["jpg", "gif"]) {
+            const src = "https://www.harveymaps.co.uk/acatalog/" + prodCode + "." + ext;
+            const dst = "images/" + prodCode + "_front." + ext;
+            try {
+                await download(src, dst);
+                downloadedImg = true;
+                break
+            } catch (err) {
+                log("Failed to fetch", src, layer.name, title, ": ", err);
+            }
+        }
+        if (!downloadedImg) {
+            log("Failed to fetch any image, skipping layer", layer.name, title);
             continue;
         }
 
-        if (f.polygons && f.polylines) {
-            throw new Error("Unimplemented");
-        }
         let geometry;
         if (f.polygons) {
             const coordinates = f.polygons.map(p => p.coords
@@ -146,50 +166,60 @@ for (const layer of rawData.layers) {
                 })
             );
 
-            for (const poly of coordinates) {
-                const first = poly.at(0);
-                const last = poly.at(-1);
-                if (first[0] !== last[0] || first[1] !== last[1]) {
-                    log("Fixing non-closed polygon", layer.name, title);
-                    poly.push([first[0], first[1]]);
-                }
-            }
-
             if (coordinates.length === 1) {
-                geometry = {
-                    type: "Polygon",
-                    coordinates,
-                };
+                if (!(coordinates[0][0][0] === coordinates[0].at(-1)[0] && coordinates[0][0][1] === coordinates[0].at(-1)[1])) {
+                    // As of Feb 2025 this is needed for Yorkshire Dales Cycleway (Cycle Touring maps)
+                    log("Converting single non-closed polygon to polyline", layer.name, title);
+                    geometry = {
+                        type: "LineString",
+                        coordinates: coordinates[0],
+                    }
+                } else {
+                    geometry = rewind({
+                        type: "Polygon",
+                        coordinates,
+                    });
+                }
             } else {
                 geometry = {type: "MultiPolygon", coordinates: []};
                 for (const poly of coordinates) {
                     if (poly.length < 4) {
-                        log("Skipping multipolygon component with less than four points in " + title)
+                        log("Skipping multipolygon component with less than four points in", layer.name, title)
                         continue
+                    }
+
+                    if (!(poly[0][0] === poly.at(-1)[0] && poly[0][1] === poly.at(-1)[1])) {
+                        log("Skipping multipolygon component with non-closed ring in", layer.name, title)
+                        continue features;
                     }
                     geometry.coordinates.push([poly]);
                 }
+                geometry = rewind(geometry);
             }
-            geometry = rewind({type: "Feature", geometry}).geometry;
         } else if (f.polylines) {
-            log("Skipping line map", layer.name, title);
-            continue;
             const coordinates = f.polylines.map(p => p.coords
                 .split(" ")
                 .map(c => {
                     const xy = c
                         .split(",")
                         .map(n => parseFloat(n));
-                    if (xy.length != 2) {
+                    if (xy.length !== 2) {
                         throw new Error("Unimplemented");
                     }
                     return reproject(xy[0], xy[1]);
                 })
             );
-            geometry = {
-                type: "MultiLineString",
-                coordinates,
-            };
+            if (coordinates.length === 1) {
+                geometry = {
+                    type: "LineString",
+                    coordinates: coordinates[0],
+                }
+            } else {
+                geometry = {
+                    type: "MultiLineString",
+                    coordinates,
+                };
+            }
         } else {
             log("Missing geometry, skipping", layer.name, title);
             continue
@@ -224,8 +254,11 @@ const json27700 = {
     features: outFeatures,
 };
 
+check(JSON.stringify(json27700));
+log("validated json pre-reprojection");
+
 const out27700 = await Deno.makeTempFile({suffix: ".json"});
-await Deno.writeTextFile(out27700, JSON.stringify(json27700));
+await Deno.writeTextFile(out27700, JSON.stringify(json27700, null, 4));
 
 const out4326 = await Deno.makeTempFile({suffix: ".json"});
 await Deno.remove(out4326);
@@ -244,8 +277,13 @@ log("reprojected json")
 const json4326 = JSON.parse(await Deno.readTextFile(out4326));
 delete json4326.name;
 
+for (const f of json4326.features) {
+    if (f.geometry === null) {
+        throw new Error("null geometry: " + JSON.stringify(f))
+    }
+}
 check(JSON.stringify(json4326));
-log("validated json")
+log("validated reprojected json")
 
 await Deno.writeTextFile("./geojson.json", JSON.stringify(json4326, null, 4));
 log("wrote ./geojson.json");
