@@ -26,7 +26,7 @@ echo
 
 # Assemble metadata
 
-attribution=$(jq -s -r 'map(.features) | flatten | map(.properties.publisher) | unique | map("© "+.) | join(" ")' sources/*/geojson.json)
+attribution="$(cat attribution.html)"
 
 echo '{"type": "FeatureCollection", "features": []}' > build/paper_maps_geojson.json
 for f in sources/*/geojson.json; do
