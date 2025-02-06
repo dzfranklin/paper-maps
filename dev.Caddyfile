@@ -1,7 +1,14 @@
 :8080 {
     file_server browse {
-        root build/
+        root out/
     }
 
-    header /tiles/* Content-Encoding gzip
+    header >Access-Control-Allow-Origin *
+
+    # Disable caching
+    header >Cache-Control "no-cache, no-store, must-revalidate"
+    header >Pragma no-cache
+    header >Expires 0
+
+    header /tiles/* >Content-Encoding gzip
 }

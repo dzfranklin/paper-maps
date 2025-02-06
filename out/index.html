@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Paper Maps Data</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+        }
+
+        main {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+    </style>
+
+    <script>
+        // Make relative urls work
+        if (location.href.endsWith('/')) {
+            location.href += 'index.html';
+        } else {
+            location.href += "/index.html";
+        }
+    </script>
+</head>
+<body>
+<main>
+    <h1>Paper Maps Data</h1>
+    <a href="demo.html">Demo map</a>
+</main>
+</body>
+</html>

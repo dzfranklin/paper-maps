@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Paper maps data demo</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+
+    <link href="demo_vendor/maplibre-gl.css" rel="stylesheet" type="text/css"/>
+    <script src="demo_vendor/maplibre-gl.js"></script>
+    <script src="demo_vendor/turf.min.js"></script>
+    <script src="demo_vendor/pmtiles.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+
+        #filters {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            width: 20px;
+            height: 30px;
+            overflow: auto;
+            background-color: white;
+        }
+
+        #filters.filters--expanded {
+            width: 300px;
+            height: 400px;
+        }
+
+        .filters__toggle {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            padding: 1px;
+        }
+
+        .filters__toggle::after {
+            content: "+";
+        }
+
+        .filters--expanded .filters__toggle::after {
+            content: "-";
+        }
+
+        .filters__list {
+            display: none;
+
+            margin: 15px;
+            padding: 0;
+            list-style: none;
+        }
+
+        .filters--expanded .filters__list {
+            display: block;
+        }
+
+        .description-html * {
+            border: 1px dashed #9f9f9f;
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+<div id="filters" class="filters--expanded">
+    <button onclick="document.querySelector('#filters').classList.toggle('filters--expanded')"
+            class="filters__toggle"></button>
+</div>
+<script>
+    // Helpers
+
+    function createElement(options) {
+        const node = document.createElement(options.tag || 'div');
+
+        if (options.style) {
+            for (const key in options.style) {
+                const value = options.style[key];
+                if (value !== undefined) {
+                    node.style[key] = value;
+                }
+            }
+        }
+
+        for (const key in options) {
+            if (key === 'tag' || key === 'contents' || key === 'style') {
+                continue;
+            }
+
+            if (key in node) {
+                node[key] = options[key];
+            } else {
+                node.setAttribute(key, options[key]);
+            }
+        }
+
+        if (options.contents !== undefined) {
+            const contents = Array.isArray(options.contents)
+                ? options.contents
+                : [options.contents];
+
+            for (const childOpts of contents) {
+                if (childOpts === undefined || childOpts === null || childOpts === false) {
+                    continue;
+                }
+
+                let childNode;
+                if (typeof childOpts === 'string') {
+                    childNode = document.createTextNode(childOpts);
+                } else if (childOpts instanceof HTMLElement) {
+                    childNode = childOpts;
+                } else {
+                    childNode = createElement(childOpts);
+                }
+
+                node.appendChild(childNode);
+            }
+        }
+
+        return node;
+    }
+</script>
+<script>
+    const layerStyles = [
+        {
+            "id": "paper-poly-hit-target",
+            "type": "fill",
+            "source": "paper",
+            "source-layer": "default",
+            "minzoom": 6,
+            "filter": ["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false],
+            "layout": {},
+            "paint": {
+                "fill-color": ["get", "color"],
+                "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.1, 0],
+            },
+        },
+        {
+            "id": "paper-poly-line",
+            "type": "line",
+            "source": "paper",
+            "source-layer": "default",
+            "slot": "middle",
+            "minzoom": 6,
+            "filter": ["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false],
+            "layout": {
+                "line-cap": "round",
+                "line-join": "round",
+                "line-miter-limit": 2,
+                "line-round-limit": 1.5,
+            },
+            "paint": {
+                "line-color": ["get", "color"],
+                "line-width": ["interpolate", ["linear"], ["zoom"], 6, 0.5, 8, 2],
+                "line-dasharray": [2, 2],
+            },
+        },
+        {
+            "id": "paper-poly-label",
+            "type": "symbol",
+            "source": "paper",
+            "source-layer": "default",
+            "slot": "top",
+            "filter": ["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false],
+            "layout": {
+                "symbol-placement": "line",
+                "symbol-spacing": 277,
+
+                "text-offset": [0, 1],
+                "text-field": ["step", ["zoom"],
+                    ["format",
+                        ["image", ["get", "icon"]], {"vertical-align": "center"},
+                        " ", {"font-scale": 1.5},
+                        ["coalesce", ["get", "short_title"], ["get", "truncated_title"]], {"vertical-align": "center"},
+                    ],
+                    12, ["format",
+                        ["image", ["get", "icon"]], {"vertical-align": "center"},
+                        " ", {"font-scale": 1.5},
+                        ["get", "title"], {"vertical-align": "center"},
+                    ],
+                ],
+                "text-size": ["interpolate", ["linear"], ["zoom"],
+                    4, 8,
+                    12, 13,
+                    14, 15],
+                "text-anchor": "center",
+                "text-font": ["Noto Sans Regular"],
+                "text-letter-spacing": 0.05,
+            },
+            "paint": {
+                "text-color": ["get", "color"],
+                "text-halo-blur": 0.5,
+                "text-halo-color": "#e5e5e5",
+                "text-halo-width": 1.5,
+            },
+        },
+        {
+            "id": "paper-poly-icon",
+            "type": "symbol",
+            "source": "paper",
+            "source-layer": "default",
+            "slot": "top",
+            "maxzoom": 6,
+            "filter": ["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false],
+            "layout": {
+                "icon-image": ["get", "icon"],
+                "icon-size": ["interpolate", ["linear"], ["zoom"], 0, 0.4, 6, 0.8],
+            },
+            "paint": {},
+        },
+    ];
+    const layerIDs = layerStyles.map(s => s.id);
+
+    function featureDetails(f) {
+        const p = f.properties;
+        const lastUpdated = new Date(p.last_updated);
+        const images = 'images' in p ? JSON.parse(p.images) : undefined;
+        return createElement({
+            tag: "div",
+            style: {
+                display: "flex",
+                flexDirection: "column",
+                gap: "10px",
+                margin: "4px",
+            },
+            contents: [
+                {
+                    tag: "div",
+                    style: {display: "flex", alignItems: "end"},
+                    contents: [
+                        p.thumbnail && {
+                            tag: "img",
+                            src: p.thumbnail,
+                            style: {height: "120px", paddingInlineEnd: "10px"}
+                        },
+                        {
+                            tag: "div",
+                            contents: [
+                                {
+                                    tag: "a",
+                                    href: p.url,
+                                    target: "_blank",
+                                    contents: '"' + p.title + '"',
+                                },
+                                {tag: "br"},
+                                `by "${p.publisher}", ${(p.series ? p.series + ' series' : 'no series defined')}`,
+                                {tag: "br"},
+                                {
+                                    tag: "span",
+                                    contents: `${Math.round((new Date() - lastUpdated) / (1000 * 3600 * 24))} days since last updated (${lastUpdated.toLocaleString()})`,
+                                }
+                            ]
+                        }
+                    ]
+                },
+                p.description && {
+                    tag: "div",
+                    contents: [
+                        {tag: "span", contents: 'Description text:'},
+                        {
+                            tag: "div",
+                            style: {border: "1px solid black", padding: "4px", whiteSpace: "pre-wrap"},
+                            contents: p.description
+                        },
+                    ]
+                },
+                p.description_html && {
+                    tag: "div",
+                    contents: [
+                        {tag: "span", contents: 'Description html:'},
+                        {
+                            tag: "div",
+                            style: {border: "1px solid black", padding: "4px"},
+                            className: "description-html",
+                            innerHTML: p.description_html
+                        },
+                    ]
+                },
+                p.images && p.images.length > 0 && {
+                    tag: "div",
+                    style: {
+                        margin: "4px",
+                    },
+                    contents: images.map(img => ({
+                        tag: "img",
+                        src: img,
+                        style: {maxWidth: "100%", maxHeight: "300px", margin: "5px", border: "1px dashed black"},
+                    })),
+                },
+                {
+                    tag: "div",
+                    contents: {
+                        tag: "pre",
+                        contents: {
+                            tag: "code",
+                            contents: "properties: " + JSON.stringify(f.properties, null, 2),
+                        }
+                    },
+                },
+                {
+                    tag: "div",
+                    style: {display: "flex"},
+                    contents: [
+                        {
+                            tag: "button",
+                            contents: "log to console",
+                            style: {marginRight: "15px"},
+                            onclick: () => {
+                                window.f = f;
+                                console.log(`// ${f.properties.title} (${f.properties.publisher}/${f.properties.series ?? ''})\nwindow.f =`, f);
+                            },
+                        },
+                        {tag: "span", contents: 'as GeoJSON:', style: {marginRight: "5px"}},
+                        {
+                            tag: "input",
+                            value: JSON.stringify({type: f.type, properties: f.properties, geometry: f.geometry}),
+                            style: {flexGrow: "1"},
+                            onclick: (e) => e.currentTarget.select(),
+                        },
+                    ]
+                }
+            ],
+        });
+    }
+
+    (async function () {
+        let protocol = new pmtiles.Protocol({metadata: true});
+        maplibregl.addProtocol("pmtiles", protocol.tile);
+
+        const publishers = await (await fetch('publishers.json')).json();
+
+        const allPublishers = Object.keys(publishers).sort((a, b) => a.localeCompare(b));
+        const visiblePublishers = new Set(allPublishers);
+
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://api.protomaps.com/styles/v2/light.json?key=1a8ef0d1df776146',
+            center: [0, 57],
+            zoom: 6,
+            hash: true,
+        });
+        window.map = map;
+
+        map.on("load", async () => {
+            // In a real deployment loading the icons shouldn't block rendering
+            await Promise.all(Object.values(publishers).map(async p => {
+                const img = await map.loadImage(p.icon);
+                await map.addImage(p.icon, img.data, {pixelRatio: 2});
+            }));
+
+            map.addSource("paper", {type: 'vector', 'url': 'pmtiles://paper_maps.pmtiles'});
+
+            // Layers
+            layerStyles.forEach(l => map.addLayer(l));
+
+            // Filters
+
+            const filtersEl = document.querySelector("#filters");
+            filtersEl.append(createElement({
+                tag: "ul",
+                className: "filters__list",
+                contents: allPublishers.map(publisher => ({
+                    tag: "li",
+                    contents: [
+                        {
+                            tag: "input",
+                            type: "checkbox",
+                            name: publisher,
+                            checked: visiblePublishers.has(publisher),
+                        },
+                        {
+                            tag: "img",
+                            src: publishers[publisher]?.icon,
+                            height: 18,
+                        },
+                        {
+                            tag: "span",
+                            contents: publisher,
+                        },
+                    ],
+                })),
+            }))
+
+            function updateMapFilters() {
+                const filterValues = Array.from(visiblePublishers);
+                if (filterValues.length === 0) {
+                    filterValues.push('');
+                }
+                let publisherFilter = ["in", ["get", "publisher"], ["literal", filterValues]];
+
+                for (const layer of layerStyles) {
+                    let filter = publisherFilter;
+                    if (layer.filter) {
+                        filter = ["all", filter, layer.filter];
+                    }
+                    map.setFilter(layer.id, filter);
+                }
+            }
+
+            updateMapFilters();
+
+            // Interactivity
+
+            filtersEl.addEventListener("change", evt => {
+                if (evt.target.checked) {
+                    visiblePublishers.add(evt.target.name);
+                } else {
+                    visiblePublishers.delete(evt.target.name);
+                }
+                updateMapFilters();
+            });
+
+            let hoveredIDs = new Set();
+            map.on("mousemove", (e) => {
+                for (const fid of hoveredIDs) {
+                    map.setFeatureState(
+                        {source: "paper", sourceLayer: "default", id: fid},
+                        {hover: false}
+                    );
+                }
+
+                const results = map.queryRenderedFeatures(e.point, {layers: layerIDs});
+                if (results.length > 0) {
+                    hoveredIDs = new Set(results.map(f => f.id));
+                    for (const fid of hoveredIDs) {
+                        map.setFeatureState(
+                            {source: "paper", sourceLayer: "default", id: fid},
+                            {hover: true}
+                        );
+                    }
+                }
+            });
+            map.on("mouseleave", () => {
+                for (const fid of hoveredIDs) {
+                    map.setFeatureState(
+                        {source: "paper", sourceLayer: "default", id: fid},
+                        {hover: false}
+                    );
+                }
+                hoveredIDs = new Set();
+            });
+
+            map.on("click", (e) => {
+                const results = map.queryRenderedFeatures(e.point, {layers: layerIDs});
+                if (results.length === 0) return;
+                const uniqueSet = new Set();
+                const features = [];
+                for (const f of results.reverse()) {
+                    if (!uniqueSet.has(f.id)) features.push(f);
+                }
+
+                const content = createElement({
+                    tag: "div",
+                    style: {
+                        width: "calc(min(80vw,700px))",
+                        height: "500px",
+                        overflow: "auto",
+                    },
+                    contents: features.map((f, i) => ({
+                        tag: "details",
+                        open: i === 0,
+                        contents: [
+                            {
+                                tag: "summary",
+                                contents:
+                                    `${f.properties.short_title ?? f.properties.title}` +
+                                    ` (${f.properties.publisher}${f.properties.series ? `, ${f.properties.series}` : ''})`,
+                            },
+                            featureDetails(f),
+                        ]
+                    })),
+                });
+
+                new maplibregl.Popup({maxWidth: 'none'})
+                    .setLngLat(e.lngLat)
+                    .setDOMContent(content)
+                    .addTo(map);
+            });
+        });
+    }())
+</script>
+
+</body>
+</html>

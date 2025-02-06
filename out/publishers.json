@@ -1,0 +1,39 @@
+{
+    "Ordnance Survey of Northern Ireland": {
+        "publisher": "Ordnance Survey of Northern Ireland",
+        "icon": "https://plantopo-storage.b-cdn.net/paper-maps/publisher-icons/osni.png",
+        "series": [
+            "Activity"
+        ]
+    },
+    "Harvey Maps": {
+        "publisher": "Harvey Maps",
+        "icon": "https://plantopo-storage.b-cdn.net/paper-maps/publisher-icons/harvey.png",
+        "series": [
+            "Superwalker (1:25,000)",
+            "Ultramap (1:40,000)",
+            "British Mountain Map (1:40,000)",
+            "Trail Map (1:40,000)",
+            "Outdoor Atlas"
+        ]
+    },
+    "US Forest Service": {
+        "publisher": "US Forest Service",
+        "icon": "https://plantopo-storage.b-cdn.net/paper-maps/publisher-icons/usfs.png",
+        "series": [
+            "FSTopo"
+        ]
+    },
+    "Ordnance Survey": {
+        "publisher": "Ordnance Survey",
+        "icon": "https://plantopo-storage.b-cdn.net/paper-maps/publisher-icons/os.png",
+        "series": [
+            "OS Landranger",
+            "OS Explorer",
+            "OS Pathfinder Circular Walks",
+            "OS Short Walks Made Easy",
+            "OS Pathfinder Short Walks",
+            "OS Pathfinder City Walks"
+        ]
+    }
+}
