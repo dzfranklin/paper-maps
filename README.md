@@ -9,7 +9,7 @@ For a preview of the data visit https://plantopo.com/map and enable the "Paper M
 United Kingdom:
 
 - OS Explorer
-- Most Harvey maps (lower quality geometries)
+- Most Harvey maps
 - OSNI Activity
 
 United States:
