@@ -2,7 +2,7 @@
 
 My ultimate goal is to create a dataset of paper map metadata around the world.
 
-For a preview of the data visit https://plantopo.com/map and enable the "Paper Maps" overlay.
+[See it on a map](https://plantopo.com/map#c=9/55.4396/-2.9218&l=osm-standard~paper-maps.overlay)
 
 ## Coverage
 
