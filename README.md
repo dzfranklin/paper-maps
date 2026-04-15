@@ -1,6 +1,6 @@
 # Paper Maps
 
-My ultimate goal is to create a dataset of paper maps around the world.
+My ultimate goal is to create a dataset of paper map metadata around the world.
 
 For a preview of the data visit https://plantopo.com/map and enable the "Paper Maps" overlay.
 
